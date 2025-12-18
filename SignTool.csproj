@@ -1,0 +1,22 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyTitle>SafeNet USB Token Bulk Signing Tool</AssemblyTitle>
+    <AssemblyDescription>Megabyte Systems Bulk Code Signing Tool for SafeNet USB tokens with OV certificates</AssemblyDescription>
+    <AssemblyVersion>1.0.3.0</AssemblyVersion>
+    
+    <!-- Global Tool Configuration -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>mst</ToolCommandName>
+    <PackageId>MegabyteSystems.SignTool</PackageId>
+    <Version>1.0.3</Version>
+    <Authors>Megabyte Systems</Authors>
+    <Company>Megabyte Systems, Inc.</Company>
+    <PackageDescription>Bulk code signing tool for SafeNet USB tokens with OV certificates</PackageDescription>
+  </PropertyGroup>
+
+</Project>

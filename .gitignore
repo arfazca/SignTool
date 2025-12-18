@@ -1,0 +1,15 @@
+# Build output
+bin/
+obj/
+
+# Logs
+*.log
+signing_log.txt
+
+# Executables
+*.exe
+
+# User-specific
+*.user
+*.suo
+.vs/
