@@ -234,16 +234,16 @@ jobs:
         ## Megabyte Systems SignTool v${{ steps.version.outputs.version }}
         
         ### Installation
-```bash
+        ```bash
         dotnet tool install --global MegabyteSystems.SignTool
-```
+        ```
         
         ### Usage
-```bash
+        ```bash
         mst -dr "C:\MyProject"
         mst -exe "C:\MyApp.exe"
         mst -help
-```
+        ```
         
         ### Changes
         
