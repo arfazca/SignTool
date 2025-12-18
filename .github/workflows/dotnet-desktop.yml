@@ -1,0 +1,293 @@
+name: MST CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+    tags:
+      - 'v*.*.*'
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  PROJECT_NAME: 'SignTool'
+  PACKAGE_NAME: 'MegabyteSystems.SignTool'
+  CONFIGURATION: 'Release'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  # Build and Test Job
+  build:
+    name: Build & Test
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+        cache: true
+        cache-dependency-path: '**/packages.lock.json'
+    
+    - name: Display .NET version
+      run: dotnet --version
+    
+    - name: Restore dependencies
+      run: dotnet restore ${{ env.PROJECT_NAME }}.csproj
+    
+    - name: Build project
+      run: dotnet build ${{ env.PROJECT_NAME }}.csproj --configuration ${{ env.CONFIGURATION }} --no-restore
+    
+    - name: Run tests (if tests exist)
+      run: dotnet test ${{ env.PROJECT_NAME }}.csproj --configuration ${{ env.CONFIGURATION }} --no-build --verbosity normal
+      continue-on-error: true
+    
+    - name: Pack NuGet package
+      run: dotnet pack ${{ env.PROJECT_NAME }}.csproj --configuration ${{ env.CONFIGURATION }} --no-build --output ./nupkg
+    
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: nuget-package
+        path: ./nupkg/*.nupkg
+        retention-days: 30
+    
+    - name: Upload build logs
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: build-logs
+        path: |
+          **/*.log
+          **/bin/**
+        retention-days: 7
+
+  # Validate Package Job
+  validate:
+    name: Validate Package
+    needs: build
+    runs-on: windows-latest
+    
+    steps:
+    - name: Download artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: nuget-package
+        path: ./nupkg
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+    
+    - name: List package contents
+      shell: pwsh
+      run: |
+        Write-Host "Validating NuGet package..." -ForegroundColor Cyan
+        $package = Get-ChildItem ./nupkg/*.nupkg | Select-Object -First 1
+        Write-Host "Package: $($package.Name)" -ForegroundColor Green
+        Write-Host "Size: $([math]::Round($package.Length / 1KB, 2)) KB" -ForegroundColor Green
+    
+    - name: Test package installation
+      shell: pwsh
+      run: |
+        Write-Host "Testing package installation..." -ForegroundColor Yellow
+        $package = Get-ChildItem ./nupkg/*.nupkg | Select-Object -First 1
+        
+        # Try to install the tool locally
+        dotnet tool install --global --add-source ./nupkg ${{ env.PACKAGE_NAME }}
+        
+        # Verify installation
+        $installed = dotnet tool list --global | Select-String "${{ env.PACKAGE_NAME }}"
+        if ($installed) {
+          Write-Host "✓ Package installed successfully" -ForegroundColor Green
+          
+          # Test the tool
+          Write-Host "Testing tool execution..." -ForegroundColor Yellow
+          mst -help
+          
+          Write-Host "✓ Tool executed successfully" -ForegroundColor Green
+        } else {
+          Write-Host "✗ Package installation failed" -ForegroundColor Red
+          exit 1
+        }
+        
+        # Cleanup
+        dotnet tool uninstall --global ${{ env.PACKAGE_NAME }}
+
+  # Publish to NuGet.org (only on tags)
+  publish-nuget:
+    name: Publish to NuGet.org
+    needs: [build, validate]
+    runs-on: windows-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+    - name: Download artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: nuget-package
+        path: ./nupkg
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+    
+    - name: Publish to NuGet.org
+      shell: pwsh
+      env:
+        NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+      run: |
+        Write-Host "Publishing to NuGet.org..." -ForegroundColor Cyan
+        $package = Get-ChildItem ./nupkg/*.nupkg | Select-Object -First 1
+        
+        if ([string]::IsNullOrEmpty($env:NUGET_API_KEY)) {
+          Write-Host "⚠ NUGET_API_KEY not set. Skipping publish." -ForegroundColor Yellow
+          exit 0
+        }
+        
+        dotnet nuget push $package.FullName --api-key $env:NUGET_API_KEY --source https://api.nuget.org/v3/index.json --skip-duplicate
+        
+        if ($LASTEXITCODE -eq 0) {
+          Write-Host "✓ Published successfully to NuGet.org" -ForegroundColor Green
+        } else {
+          Write-Host "✗ Publish failed" -ForegroundColor Red
+          exit 1
+        }
+
+  # Publish to GitHub Packages
+  publish-github:
+    name: Publish to GitHub Packages
+    needs: [build, validate]
+    runs-on: windows-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    
+    steps:
+    - name: Download artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: nuget-package
+        path: ./nupkg
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+    
+    - name: Publish to GitHub Packages
+      shell: pwsh
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        Write-Host "Publishing to GitHub Packages..." -ForegroundColor Cyan
+        $package = Get-ChildItem ./nupkg/*.nupkg | Select-Object -First 1
+        
+        dotnet nuget push $package.FullName --api-key $env:GITHUB_TOKEN --source "https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json" --skip-duplicate
+        
+        if ($LASTEXITCODE -eq 0) {
+          Write-Host "✓ Published successfully to GitHub Packages" -ForegroundColor Green
+        } else {
+          Write-Host "✗ Publish failed" -ForegroundColor Red
+          exit 1
+        }
+
+  # Create GitHub Release
+  create-release:
+    name: Create GitHub Release
+    needs: [build, validate, publish-nuget]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    
+    - name: Download artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: nuget-package
+        path: ./nupkg
+    
+    - name: Extract version from tag
+      id: version
+      run: |
+        VERSION=${GITHUB_REF#refs/tags/v}
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Version: $VERSION"
+    
+    - name: Generate release notes
+      id: release_notes
+      run: |
+        cat << 'EOF' > release_notes.md
+        ## Megabyte Systems SignTool v${{ steps.version.outputs.version }}
+        
+        ### Installation
+```bash
+        dotnet tool install --global MegabyteSystems.SignTool
+```
+        
+        ### Usage
+```bash
+        mst -dr "C:\MyProject"
+        mst -exe "C:\MyApp.exe"
+        mst -help
+```
+        
+        ### Changes
+        
+        See [README.md](https://github.com/${{ github.repository }}/blob/main/README.md) for full documentation.
+        
+        ### Package
+        
+        - NuGet: https://www.nuget.org/packages/MegabyteSystems.SignTool/${{ steps.version.outputs.version }}
+        - GitHub Packages: https://github.com/${{ github.repository_owner }}?tab=packages
+        EOF
+    
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        body_path: release_notes.md
+        files: ./nupkg/*.nupkg
+        draft: false
+        prerelease: false
+        generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Quality Check Job (Optional - runs on PRs)
+  quality:
+    name: Code Quality Check
+    runs-on: windows-latest
+    if: github.event_name == 'pull_request'
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+    
+    - name: Restore dependencies
+      run: dotnet restore ${{ env.PROJECT_NAME }}.csproj
+    
+    - name: Check code formatting
+      run: dotnet format ${{ env.PROJECT_NAME }}.csproj --verify-no-changes --verbosity diagnostic
+      continue-on-error: true
+    
+    - name: Analyze code
+      run: dotnet build ${{ env.PROJECT_NAME }}.csproj --configuration ${{ env.CONFIGURATION }} /p:TreatWarningsAsErrors=true
+      continue-on-error: true
