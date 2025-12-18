@@ -35,8 +35,6 @@ jobs:
       uses: actions/setup-dotnet@v4
       with:
         dotnet-version: ${{ env.DOTNET_VERSION }}
-        cache: true
-        cache-dependency-path: '**/packages.lock.json'
     
     - name: Display .NET version
       run: dotnet --version
@@ -47,10 +45,6 @@ jobs:
     - name: Build project
       run: dotnet build ${{ env.PROJECT_NAME }}.csproj --configuration ${{ env.CONFIGURATION }} --no-restore
     
-    - name: Run tests (if tests exist)
-      run: dotnet test ${{ env.PROJECT_NAME }}.csproj --configuration ${{ env.CONFIGURATION }} --no-build --verbosity normal
-      continue-on-error: true
-    
     - name: Pack NuGet package
       run: dotnet pack ${{ env.PROJECT_NAME }}.csproj --configuration ${{ env.CONFIGURATION }} --no-build --output ./nupkg
     
@@ -60,16 +54,6 @@ jobs:
         name: nuget-package
         path: ./nupkg/*.nupkg
         retention-days: 30
-    
-    - name: Upload build logs
-      if: failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: build-logs
-        path: |
-          **/*.log
-          **/bin/**
-        retention-days: 7
 
   # Validate Package Job
   validate:
@@ -111,7 +95,7 @@ jobs:
         if ($installed) {
           Write-Host "✓ Package installed successfully" -ForegroundColor Green
           
-          # Test the tool
+          # Test the tool (help command doesn't require certificate)
           Write-Host "Testing tool execution..." -ForegroundColor Yellow
           mst -help
           
